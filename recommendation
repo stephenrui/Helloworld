@@ -1,0 +1,116 @@
+import pandas as pd
+import numpy as np
+import time
+import sqlite3
+import matplotlib.pyplot as plt;plt.rcdefaults
+import numpy as np
+import matplotlib.pyplot as plt
+import Recommenders
+from sklearn.model_selection import train_test_split
+
+data_home = 'D:\\selfstudy\\recommendation\\SampleCode\\'
+
+# triplet_dataset = pd.read_csv(filepath_or_buffer=data_home+'train_triplets.txt',sep='\t', header=None, names=['user','song','play_count'])
+# print(triplet_dataset.info())
+# triplet_dataset.head(n=10);
+
+output_dict = {}
+with open(data_home+'train_triplets.txt') as f:
+    for line_number ,line in enumerate(f):
+        user = line.split('\t')[0]
+        play_count = int(line.split('\t')[2])
+        if user in output_dict:
+            play_count += output_dict[user]
+            output_dict.update({user:play_count})
+        output_dict.update({user: play_count})
+output_list = [{'user':k,'play_count':v} for k,v in output_dict.items()]
+play_count_df = pd.DataFrame(output_list)
+play_count_df = play_count_df.sort_values(by = 'play_count', ascending = False)
+play_count_df.to_csv(path_or_buf='user_playcount_df.csv', index = False)
+
+output_dict = {}
+with open(data_home+'train_triplets.txt') as f:
+    for line_number ,line in enumerate(f):
+        song = line.split('\t')[1]
+        play_count = int(line.split('\t')[2])
+        if song in output_dict:
+            play_count += output_dict[song]
+            output_dict.update({song:play_count})
+        output_dict.update({song: play_count})
+output_list = [{'song':k,'play_count':v} for k,v in output_dict.items()]
+play_count_df = pd.DataFrame(output_list)
+play_count_df = play_count_df.sort_values(by = 'play_count', ascending = False)
+play_count_df.to_csv(path_or_buf='song_playcount_df.csv', index = False)
+
+play_count_df = pd.read_csv(filepath_or_buffer = 'user_playcount_df.csv')
+song_count_df = pd.read_csv(filepath_or_buffer = 'song_playcount_df.csv')
+
+play_count_df.head(10)
+song_count_df.head(10)
+
+total_play_count = sum(song_count_df.play_count)
+print((float(play_count_df.head(n = 100000).play_count.sum())/total_play_count)*100)
+play_count_subset = play_count_df.head(n = 100000)
+print((float(song_count_df.head(n = 30000).play_count.sum())/total_play_count)*100)
+song_count_subset = song_count_df.head(n = 30000)
+
+user_subset = list(play_count_subset.user)
+song_subset = list(song_count_subset.song)
+
+triplet_dataset = pd.read_csv(filepath_or_buffer=data_home+'train_triplets.txt',sep='\t', header=None, names=['user','song','play_count'])
+triplet_dataset_sub = triplet_dataset[triplet_dataset.user.isin(user_subset)]
+del(triplet_dataset)
+triplet_dataset_sub_song = triplet_dataset_sub[triplet_dataset_sub.song.isin(song_subset)]
+del(triplet_dataset_sub)
+triplet_dataset_sub_song.to_csv(path_or_buf='triplet_dataset_sub_song.csv', index=False)
+print(triplet_dataset_sub_song.shape)
+
+conn = sqlite3.connect(data_home+'track_metadata.db')
+cur = conn.cursor()
+cur.execute("SELECT NAME FROM sqlite_master where type='table'")
+cur.fetchall()
+track_metadate_df = pd.read_sql(con=conn, sql='select * from songs')
+track_metadate_df_sub = track_metadate_df[track_metadate_df.song_id.isin(song_subset)]
+track_metadate_df_sub.to_csv(path_or_buf='track_metadata_df_sub.csv', index = False)
+print(track_metadate_df_sub.shape)
+
+del(track_metadate_df_sub['track_id'])
+del(track_metadate_df_sub['artist_mbid'])
+track_metadate_df_sub = track_metadate_df_sub.drop_duplicates(['song_id'])
+triplet_dataset_sub_song_merge = pd.merge(triplet_dataset_sub_song, track_metadate_df_sub, how='left',left_on='song',right_on='song_id')
+triplet_dataset_sub_song_merge.rename(columns = {'play_count':'listen_count'},inplace=True)
+del(triplet_dataset_sub_song_merge['song_id'])
+del(triplet_dataset_sub_song_merge['artist_id'])
+del(triplet_dataset_sub_song_merge['duration'])
+del(triplet_dataset_sub_song_merge['artist_familiarity'])
+del(triplet_dataset_sub_song_merge['artist_hotttnesss'])
+del(triplet_dataset_sub_song_merge['track_7digitalid'])
+del(triplet_dataset_sub_song_merge['shs_perf'])
+del(triplet_dataset_sub_song_merge['shs_work'])
+print(triplet_dataset_sub_song_merge.head(n=10))
+
+popular_songs = triplet_dataset_sub_song_merge[['title','listen_count']].groupby('title').sum().reset_index()
+popular_songs_top_20 = popular_songs.sort_values('listen_count',ascending=False).head(20)
+
+objects = list(popular_songs_top_20['title'])
+y_pos = np.arange(len(objects))
+performance = list(popular_songs_top_20['listen_count'])
+plt.bar(y_pos, performance, align='center', alpha = 0.5)
+plt.xticks(y_pos, objects, rotation = 'vertical')
+plt.ylabel('Item count')
+plt.title('Most popular songs')
+plt.show()
+
+song_count_subset = song_count_df.head(n=5000)
+user_subset = list(play_count_subset.user)
+song_subset = list(song_count_subset.song)
+triplet_dataset_sub_song_merge_sub = triplet_dataset_sub_song_merge[triplet_dataset_sub_song_merge.song.isin(song_subset)]
+
+train_data , test_data = train_test_split(triplet_dataset_sub_song_merge_sub, test_size= 0.30, random_state = 0)
+is_model = Recommenders.item_similarity_recommender_py()
+is_model.create(train_data, 'user', 'title')
+user_id = list(train_data.user)[7]
+user_items = is_model.get_user_items(user_id)
+is_model.recommend(user_id)
+
+
